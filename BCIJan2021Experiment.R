@@ -12,7 +12,7 @@ vistemplate <- plot_ly() %>%
 
 timetemplate <- plot_ly() %>%
   config(scrollZoom = TRUE, displaylogo = FALSE, modeBarButtonsToRemove = c("select2d","hoverCompareCartesian", "toggleSpikelines","toImage", "sendDataToCloud", "editInChartStudio", "lasso2d", "drawclosedpath", "drawopenpath", "drawline", "drawcircle", "eraseshape", "autoScale2d", "hoverClosestCartesian","toggleHover", "")) %>%
-  layout(dragmode = "pan", xaxis = list(tickformat="%H:%M:%S.%L ms"), yaxis = list(range=c(0,1.1)))
+  layout(dragmode = "pan", xaxis = list(tickformat="%H:%M:%S.%L ms"))#, yaxis = list(range=c(0,1.1)))
 
 df_kiwi = LoadFromDirectory('Kiwi', event = "Game", sample = "Sample", meta = "Meta", sep=';')
 df_hand = LoadFromDirectory('HandStrength', event = "Game", sample = "Sample", meta = "Meta", sep=';')
@@ -24,14 +24,15 @@ df_kiwi = df_kiwi %>% rename(GameTitle = i0, PID = i1, Condition = i2)
 df_hand = df_hand %>% rename(GameTitle = i0, PID = i1, Condition = i2)
 
 
-df_kiwi = df_kiwi %>% mutate(PID = as.numeric(PID))
-df_hand = df_hand %>% mutate(PID = as.numeric(PID))
+df_kiwi = df_kiwi %>% mutate(PID = as.factor(PID))
+df_hand = df_hand %>% mutate(PID = as.factor(PID))
 
 
-#########
-# Count #
-#########
-trial_summary <- df_kiwi %>% ungroup() %>% group_by(PID,Condition) %>%
+#############
+# Summaries #
+#############
+
+trial_summary <- df_hand %>% ungroup() %>% group_by(PID,Condition) %>%
   filter(Event == "GameDecision") %>%
   summarize(rejInput = sum(TrialResult == "RejInput"),
             accInput = sum(TrialResult == "AccInput"),
@@ -49,9 +50,7 @@ p_overall <- trial_summary %>% group_by(Condition) %>%
 
 vistemplate %>%
   add_trace(data = trial_summary, x=~Condition, y=~rate,
-            type='scatter',mode='markers+lines', color=~PID) %>%
-  add_trace(data = trial_summary, x=~Condition, y=~rate,
-            type='scatter',mode='markers+lines', color=~PID)
+            type='scatter',mode='markers', color=~PID)
 
 ##############
 # Perc-Frust #
@@ -62,16 +61,29 @@ dr_kiwi <- gsheet2tbl(url)
 url = 'https://docs.google.com/spreadsheet/ccc?key=1qew_UwZLD9Pkh4ogGUBTuV6nPEI_ITq4cjcnLnUfoBg#gid=237988817'
 dr_hand <- gsheet2tbl(url)
 
-valid_pids = 1:3
+valid_pids = 1:4
 dr_hand <- dr_hand %>% filter(Participant %in% valid_pids)
 dr_kiwi <- dr_hand %>% filter(Participant %in% valid_pids)
 
+dr_hand <- dr_hand %>% mutate(Participant = as.factor(Participant))
+dr_kiwihand <- dr_hand %>% mutate(Participant = as.factor(Participant))
 
 vistemplate %>%
-  add_trace(data = dr_kiwi, x=~Condition, y=~jitter(PercNormalized, amount=.02),
+  add_trace(data = dr_hand, x=~Condition, y=~jitter(PercNormalized, amount=.02),
             type='scatter',mode='markers', color=~Participant)
 
 trial_combined = trial_summary %>% left_join(dr_kiwi, by=c("PID" = "Participant", "Condition" = "Condition"))
+
+vistemplate %>%
+  add_trace(data = trial_combined, x=~rate, y=~jitter(PercNormalized, amount=.03),
+            type='scatter',mode='markers', color=~Condition, size=2)
+
+timetemplate %>%
+  add_trace(data = df_kiwi %>% filter(PID == "1"), x =~Framecount, y=~BCIConfidence, type="scattergl", mode="markers")
+
+#################################################
+# Influence of 50A on people's level of control #
+#################################################
 
 vistemplate %>%
   add_trace(data = trial_combined, x=~rate, y=~jitter(PercNormalized, amount=.03),
