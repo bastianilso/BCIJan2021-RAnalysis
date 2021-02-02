@@ -64,7 +64,7 @@ dr_kiwi <- gsheet2tbl(url)
 url = 'https://docs.google.com/spreadsheet/ccc?key=1qew_UwZLD9Pkh4ogGUBTuV6nPEI_ITq4cjcnLnUfoBg#gid=237988817'
 dr_hand <- gsheet2tbl(url)
 
-valid_pids = 1:13
+valid_pids = 1:16
 dr_hand <- dr_hand %>% filter(Participant %in% valid_pids)
 dr_kiwi = dr_kiwi %>% mutate(Participant = NULL,
                              Participant = KiwiParticipant,
