@@ -5,6 +5,12 @@
 # Session Data files
 .RData
 
+# CSV data
+data/
+
+# Figures
+fig/*.pdf
+
 # Example code in package build process
 *-Ex.R
 

@@ -1,3 +1,0 @@
-SessionID;Timestamp;Framecount;Email;DeviceID;FabInputTrials;AccInputTrials;RejInputTrials;Trials;InterTrialInterval_sec;InputWindow_sec;noInputReceivedFabAlarm_sec;FabAlarmVariability_sec;ConfidenceThreshold;BCIProcessingMode;ConsecutiveThresholdBufferSize
-bfda39d589645875962512e6a33291b5;2021-01-29 09:51:25.5495;1;anonymous;672c79dd700423a845a1ad6147a6afcd2d17534f;6;14;0;20;2.0000;5.0000;3.0000;1.9000;0.7700;ConsecutiveThreshold;8
-
