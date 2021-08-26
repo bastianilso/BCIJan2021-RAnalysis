@@ -43,6 +43,12 @@ L <- L %>% filter(Participant %in% valid_pids)
 D <- D %>% left_join(L, by=c('GameTitle' = 'GameTitle', 'Condition' = 'Condition', 'Participant' = 'Participant'))
 
 #############
+# Filter out missed conditions
+#############
+
+D <- D %>% filter(!Condition %in% c('50A_WRONG', '50A-2'))
+
+#############
 # Save D
 #############
 
