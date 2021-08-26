@@ -24,21 +24,50 @@ St <- D %>% ungroup() %>% group_by(GameTitle, Participant,Condition) %>%
             GameTitle = unique(GameTitle),
             totalTrials = rejInput+accInput+fabInput,
             PercNormalized = unique(PercNormalized),
-            FrustNormalized = unique(FrustNormalized))
-
+            FrustNormalized = unique(FrustNormalized),
+            gender = unique(Gender),
+            bci_experience = unique(Comment)
+            )
 St <- St %>% ungroup() %>%
   mutate(rate = (accInput)/totalTrials,
          session = 1,
          session = cumsum(session))
+
 # Sc = Summary of Conditions
-Sc <- St %>% group_by(GameTitle, Condition) %>%
+Sc <- St %>% ungroup() %>% group_by(GameTitle, Condition) %>%
   summarize(avg_rate = mean(rate),
             sum_acc = sum(accInput))
 
+# Sp = Summary of Participants
+Sp <- St %>% ungroup() %>% group_by(Participant) %>%
+  summarize(
+            gender = unique(gender),
+            mean_rate = mean(rate),
+            min_rate = min(rate),
+            max_rate = max(rate),
+            bci_experience = sum(bci_experience == "BCIExperience")
+            )
 #############
 # Latex Table with demographic and summary information
 #############
 
+Sp <- Sp %>% mutate(bci_experience = ifelse(bci_experience > 0, "Yes", "No"),
+                    bci_experience = ifelse(is.na(bci_experience), "No", bci_experience),
+                    mean_rate = format(round(mean_rate,2), nsmall = 2),
+                    min_rate = format(round(min_rate,2), nsmall = 2),
+                    max_rate = format(round(max_rate,2), nsmall = 2),
+                    across(everything(), as.character)) %>%
+             rename(Gender = gender, `Mean Rate` = mean_rate, `Min. Rate` = min_rate, `Max. Rate` = max_rate, `BCI Experience` = bci_experience)
+
+Sp_table = Sp %>% pivot_longer(cols=-Participant, names_to = "Feature") %>%
+  pivot_wider(names_from = Participant, values_from = value)
+
+paste(colnames(Sp_table), collapse=" & ")
+Sp_table %>% apply(.,1,paste,collapse=" & ")
+
+
+  group_by(Feature) %>% summarise(text = paste(fm_value, sep = " & ", collapse = " & "),
+  text = paste(text, "\\ ")) %>% V
 
 
 #############
