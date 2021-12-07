@@ -644,7 +644,8 @@ fig_c
 #############
  
 fig %>%
-   add_trace(data = St, x=~jitter(rate_feedback,amount=.02), y=~jitter( mi_recog_window - (mi_recog_rest / (time_rest),amount=.02), type='scatter', color=~Condition,
+   add_trace(data = St, x=~jitter(rate_feedback,amount=.02), 
+             y=~jitter( mi_recog_window - (mi_recog_rest / (time_rest),amount=.02), type='scatter', color=~Condition,
              marker = list(line = list(width = 0, color = 'rgb(0, 0, 0)'))) %>%
    add_trace(data = tibble(x=c(0,1),y=c(0,20)), x=~x, y=~y, type='scatter', mode='lines',
              line = list(width = 1, color = 'rgb(0, 0, 0)'))
@@ -750,7 +751,7 @@ orca(fig_c, "fig/study1-frust-mi-control-fabricated-input.pdf", width=650, heigh
 
 
 #############
-# Perceived Control to Outcome-based Control by Condition
+# Perceived Control to Feedback Rate by Condition
 #############
 
 PercLine <- list("100A" = p_lin(St %>% filter(Condition == "100A"),"PercNormalized", "rate_feedback"),
@@ -763,47 +764,90 @@ FrustLine <- list("100A" = p_lin(St %>% filter(Condition == "100A"),"FrustNormal
                   "50A" = p_lin(St %>% filter(Condition == "50A"),"FrustNormalized", "rate_feedback"),
                   "50B" = p_lin(St %>% filter(Condition == "50B"),"FrustNormalized", "rate_feedback"))
 
-fig %>%
+fig1 <- fig %>%
   add_trace(name= "0-100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
-            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
-  add_trace(name = "0-100% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
-            type='scatter',mode='markers', color=I('black'), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('o'), marker=list(size=8)) %>%
-  add_trace(data=PercLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=T, name='0-100%') %>%
-  add_trace(data=PercLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('circle'), marker=list(size=8)) %>%
+  add_trace(name = "30-100%", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('grey70'), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('circle'), marker=list(size=8)) %>%
   add_trace(name = "0-50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
-            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('square'), marker=list(size=7)) %>%
-  add_trace(name = "0-50% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
-            type='scatter',mode='markers', color=I('black'), symbol=I('square-open'), marker=list(size=7)) %>%
-  add_trace(data=PercLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', line=list(dash = 'dash'), showlegend=T, name='0-50%') %>%
-  add_trace(data=PercLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line',line=list(dash = 'dash'), showlegend=F) %>%
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('square'), marker=list(size=7)) %>%
+  add_trace(name = "30-80%", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('grey70'), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('circle'), marker=list(size=7)) %>%
+  add_trace(name='0-50%', data=PercLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', line=list(dash = 'dash'), showlegend=T, name='0-50%') %>%
+  add_trace(name='30-80%', data=PercLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line',line=list(dash = 'dash'), showlegend=T) %>%
+  add_trace(name = "0-100%", data=PercLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=T, name='0-100%') %>%
+  add_trace(name = "30-100%", data=PercLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=T) %>%
   layout(yaxis = list(range=c(-0.05,1.1), title="Perceived Control"), xaxis = list(range=c(-0.05,1.1), title="Feedback"))
 
+
+fig2 <- fig %>%
+  add_trace(name= "0-100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_feedback, y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('circle'), marker=list(size=8)) %>%
+  add_trace(name = "30-100%", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_feedback, y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('grey70'), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('circle'), marker=list(size=8)) %>%
+  add_trace(name = "0-50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_feedback, amount=.02), y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('square'), marker=list(size=7)) %>%
+  add_trace(name = "30-80%", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_feedback, amount=.02), y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('grey70'), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('square'), marker=list(size=7)) %>%
+  add_trace(name='0-50%', data=FrustLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', line=list(dash = 'dash'), showlegend=T, name='0-50%') %>%
+  add_trace(name='30-80%', data=FrustLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line',line=list(dash = 'dash'), showlegend=T) %>%
+  add_trace(name = "0-100%", data=FrustLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=T, name='0-100%') %>%
+  add_trace(name = "30-100%", data=FrustLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=T) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="Frustration"), xaxis = list(range=c(-0.05,1.1), title="Feedback"))
+fig1
+fig2
+orca(fig1, "fig/study1-feedback-rate-to-perceived-control.pdf", width=650, height=350)
+orca(fig2, "fig/study1-feedback-rate-to-frustration.pdf", width=650, height=350)
+#############
+# Condition Design to Actuality 
+#############
+
+
+
+fig1 <- fig %>%
+  add_trace(name='100%', data = data.frame(x=c(0,18),y=c(1.0,1.0)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='0%', data = data.frame(x=c(0,18),y=c(0,0)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='Hand Strengthener', data = St %>% filter(GameTitle %in% c("HandStrength"), Condition == "100A"),
+            color=I('black'),symbol=I('circle'), x=~Participant, y=~rate_feedback) %>%
+  add_trace(name='Kiwi', data = St %>% filter(GameTitle %in% c("Kiwi"), Condition == "100A"),
+            color=I('black'),symbol=I('x'), x=~Participant, y=~rate_feedback) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="Feedback Rate"), xaxis = list(title="Condition 0-100%"))
+
+fig2 <- fig %>%
+  add_trace(name='30%', data = data.frame(x=c(0,18),y=c(0.3,0.3)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='100%', data = data.frame(x=c(0,18),y=c(1.0,1.0)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='30-100%', data = St %>% filter(GameTitle %in% c("HandStrength"), Condition == "100B"),
+            color=I('black'), symbol=I('circle'), x=~Participant, y=~rate_feedback, showlegend=F) %>%
+  add_trace(name='30-100%', data = St %>% filter(GameTitle %in% c("Kiwi"), Condition == "100B"),
+            color=I('black'), symbol=I('x'), x=~Participant, y=~rate_feedback, showlegend=F) %>%  
+  layout(yaxis = list(range=c(-0.05,1.1), title=" ", showticklabels=F), xaxis = list(title="Condition 30-100%"))
+
 fig3 <- fig %>%
-  add_trace(name= "0-100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_trial, y=~jitter(FrustNormalized, amount=.02),
-            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
-  add_trace(name = "0-100% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_trial, y=~jitter(FrustNormalized, amount=.02),
-            type='scatter',mode='markers', color=I('black'), symbol=I('o'), marker=list(size=8)) %>%
-  add_trace(data=FrustLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
-  add_trace(data=FrustLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
-  layout(yaxis = list(range=c(-0.05,1.1), title="Frustration"), xaxis = list(range=c(-0.05,1.1), title="MI Control"))
+  add_trace(name='50%', data = data.frame(x=c(0,18),y=c(0.5,0.5)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='0%', data = data.frame(x=c(0,18),y=c(0,0)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='0-50%', data = St %>% filter(GameTitle %in% c("HandStrength"), Condition == "50A"),
+            color=I('black'), symbol=I('circle'), x=~Participant, y=~rate_feedback,showlegend=F) %>%
+  add_trace(name='0-50%', data = St %>% filter(GameTitle %in% c("Kiwi"), Condition == "50A"),
+            color=I('black'), symbol=I('x'), x=~Participant, y=~rate_feedback, showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title=" ", showticklabels=F), xaxis = list(title="Condition 0-50%"))
 
-fig4 <- fig %>% 
-  add_trace(name = "0-50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_trial, amount=.02), y=~jitter(FrustNormalized, amount=.02),
-            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('square'), marker=list(size=7)) %>%
-  add_trace(name = "0-50% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_trial, amount=.02), y=~jitter(FrustNormalized, amount=.02),
-            type='scatter',mode='markers', color=I('black'), symbol=I('square-open'), marker=list(size=7)) %>%
-  add_trace(data=FrustLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
-  add_trace(data=FrustLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
-  layout(yaxis = list(range=c(-0.05,1.1), title="", showticklabels=F), xaxis = list(range=c(-0.05,1.1), title="MI Control (50% Negatives)"))
-
-
-
-fig_c <- subplot(fig1,fig2, titleY = TRUE, titleX = TRUE) %>% 
-  layout(legend=list(orientation='h', x = 0.20, y = 1.12), title = '')
+fig4 <- fig %>%
+  add_trace(name='30%', data = data.frame(x=c(0,18),y=c(0.3,0.3)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='80%', data = data.frame(x=c(0,18),y=c(0.8,0.8)), x=~x, y=~y,
+            type='scatter',mode='lines', color=I('black'), showlegend=F) %>%
+  add_trace(name='30-80%', data = St %>% filter(GameTitle %in% c("HandStrength"), Condition == "50B"),
+            color=I('black'), symbol=I('circle'), x=~Participant, y=~rate_feedback, showlegend=F) %>%
+  add_trace(name='30-80%', data = St %>% filter(GameTitle %in% c( "Kiwi"), Condition == "50B"),
+            color=I('black'), symbol=I('x'), x=~Participant, y=~rate_feedback, showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title=" ", showticklabels=F), xaxis = list(title="Condition 30-80%"))
+fig_c <- subplot(fig1,fig2,fig3,fig4, titleY = TRUE, titleX = TRUE, margin=0.005) %>% 
+  layout(legend=list(orientation='h', x = 0.0, y = 1.12), title = '')
 fig_c
-orca(fig_c, "fig/study1-perc-mi-control-fabricated-input.pdf", width=650, height=350)
-fig_c <- subplot(fig3,fig4, titleY = TRUE, titleX = TRUE) %>% 
-  layout(legend=list(orientation='h', x = 0.20, y = 1.12), title = '')
-fig_c
-orca(fig_c, "fig/study1-frust-mi-control-fabricated-input.pdf", width=650, height=350)
-
+orca(fig_c, "fig/study1-level-of-control-participant.pdf", width=950, height=350)
