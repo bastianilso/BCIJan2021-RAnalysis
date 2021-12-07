@@ -2,6 +2,9 @@ library(plotly)
 library(lubridate)
 library(tidyverse)
 library(gsheet)
+library(lme4) # for linear mixed models
+library(MuMIn) # for R-squared values that measures how much variance is explained.
+source("utils/visutils.R")
 
 options("digits.secs"=6)
 fig <- plot_ly() %>%
@@ -21,16 +24,22 @@ St <- D %>% ungroup() %>% group_by(GameTitle, Participant,Condition) %>%
   summarize(rejInput = sum(TrialResult == "RejInput"),
             accInput = sum(TrialResult == "AccInput"),
             fabInput = sum(TrialResult == "FabInput"),
+            posTrial = sum(TrialResult == "FabInput" | TrialResult == "AccInput"),
+            negTrial = sum(TrialResult == "RejInput"),
             otherInput = sum(!TrialResult %in% c("RejInput", "AccInput", "FabInput")),
             BCIProcessingMode = unique(BCIProcessingMode),
             GameTitle = unique(GameTitle),
             ConditionOrder = unique(OrderAll),
             totalTrials = rejInput+accInput+fabInput,
             PercNormalized = unique(PercNormalized),
+            PercNormalized_first_diff = unique(PercNormalized_first_diff),
+            PercNormalized_prev_diff = unique(PercNormalized_prev_diff),
+            PercNormalized_rel = unique(PercNormalized_rel),
             FrustNormalized = unique(FrustNormalized),
             GameOrder = unique(GameOrder),
             gender = unique(Gender),
             comment = unique(Comment),
+            color = unique(Color),
             )
 
 
@@ -39,6 +48,7 @@ St <- D %>% ungroup() %>% group_by(GameTitle, Participant, Condition) %>%
   summarize(time_total = sum(time_delta),
             time_total_min = time_total / 60) %>% right_join(St)
 
+
 # Count the number of motor imagery attempts in total
 St <- D %>% ungroup() %>% group_by(GameTitle, Participant, Condition) %>%
   filter(Period %in% c("RestPeriod", "OpenPeriod")) %>%
@@ -46,7 +56,8 @@ St <- D %>% ungroup() %>% group_by(GameTitle, Participant, Condition) %>%
 
 # Group by input window. Count the number of attempts in each window.
 St <- D %>% ungroup() %>% filter(Period %in% c("OpenPeriod")) %>% group_by(GameTitle, Participant, Condition, InputWindowOrderFilled) %>%
-  summarize(mi_recog_window = sum(Event == "MotorImagery"),
+  summarize(mi_recog_window = ifelse(sum(Event == "MotorImagery") > 0, 1,0), #Whether MI happened in the window
+            mi_recog_window_count = sum(Event == "MotorImagery"), #How much MI happened in the window
             time_window = sum(time_delta)) %>%
   filter(InputWindowOrderFilled > -1) %>% ungroup() %>% group_by(GameTitle, Participant, Condition) %>%
   summarize(mi_recog_trial = sum(mi_recog_window > 0),
@@ -57,13 +68,12 @@ St <- D %>% ungroup() %>% filter(Period %in% c("OpenPeriod")) %>% group_by(GameT
 
 St <- St %>% ungroup() %>%
   mutate(rate_trial = (mi_recog_trial)/totalTrials,
-         rate_feedback = accInput/ totalTrials,
+         rate_feedback = posTrial/ totalTrials,
+         rate_fabInput = fabInput/totalTrials,
          session = 1,
          session = cumsum(session),
          bci_experience = ifelse(grepl("BCIExperience",comment), TRUE, FALSE),
          mi_experience = ifelse(grepl("MIExperience",comment), TRUE, FALSE))
-
-
 
 
 # Group by Rest Periods, count the number of attempts within each rest period.
@@ -93,7 +103,7 @@ Sp <- St %>% ungroup() %>% group_by(Participant, GameTitle) %>%
             min_rate = min(rate_trial),
             max_rate = max(rate_trial),
             mean_feedback = mean(rate_feedback),
-            bci_experience = unique(bci_experience),
+            mi_experience = unique(mi_experience),
             time_total = mean(time_total),
             mi_recog_total = sum(mi_recog),
             mi_recog_rest = sum(mi_recog_rest),
@@ -105,13 +115,162 @@ Sp <- St %>% ungroup() %>% group_by(Participant, GameTitle) %>%
 So <- St %>% ungroup() %>% group_by(ConditionOrder) %>%
   summarize(mean_rate_trial = mean(rate_trial),
             mean_rate_feedback = mean(rate_feedback))
+
+# Group people and count them based on 
+# Group Low: Participants with very low (more than half feedback was negative)
+# Group Exact: Participants close to the target rate with few false positives.
+# Group FP: Participants with more than double the false positives.
+St <- St %>% mutate(mi_group = "ExactGroup",
+                  mi_group = ifelse(mi_recog_window < (totalTrials*0.5), "LowGroup",mi_group),
+                  mi_group = ifelse(mi_recog > (totalTrials*2), "FPGroup",mi_group))
+
+St %>% ungroup() %>% group_by(GameTitle, mi_group) %>%
+  summarize(count = n())
+
+## Create Participant Groups.
+#Inclusion Criteria 1: Participants with max ratings below 50%
+St = St %>% group_by(GameTitle, Participant) %>% select(rate_feedback) %>%
+  summarise(rate_feedback = mean(rate_feedback)) %>% 
+  mutate(group_feedback = "MID",
+         group_feedback = ifelse(rate_feedback < 0.4, "LOW", group_feedback),
+         group_feedback = ifelse(rate_feedback > 0.8, "HIGH", group_feedback)) %>% 
+  select(GameTitle,Participant,group_feedback) %>% right_join(St)
+
+# Inclusion Criteria 2: Participants with high feedback variation (Range)
+St = St %>% group_by(GameTitle, Participant) %>% select(rate_feedback) %>%
+  summarise(rate_feedback_range = max(rate_feedback) - min(rate_feedback)) %>%
+  mutate(group_feedback_range = "MID",
+         group_feedback_range = ifelse(rate_feedback_range <= 0.25, "LOW", group_feedback_range),
+         group_feedback_range = ifelse(rate_feedback_range > 0.5, "HIGH", group_feedback_range)) %>%
+  select(GameTitle, Participant, group_feedback_range) %>% right_join(St)
+
+# Inclusion Criteria 3: Participants with high mean ratings (60-100%, medium 40%-60%, low <40%)
+St = St %>% group_by(GameTitle, Participant) %>% select(rate_trial) %>%
+  summarise(rate_trial = min(rate_trial)) %>% 
+  mutate(group_trial = "MID",
+         group_trial = ifelse(rate_trial < 0.4, "LOW", group_trial),
+         group_trial = ifelse(rate_trial > 0.75, "HIGH", group_trial)) %>% 
+  select(GameTitle,Participant,group_trial) %>% right_join(St)
+
+# Group people and count them based on
+# Group low variability: Participants which produced a consistent number of MI events.
+# Group high variability: Participants with high variability in MI events.
+St %>% ungroup() %>% group_by(GameTitle, Participant) %>%
+  summarize(mi_stability = ifelse(length(unique(mi_group)) > 1, "unstable", "stable"),
+            stability_type = paste(unique(mi_group), collapse=",")) %>% 
+  ungroup() %>% group_by(GameTitle, stability_type) %>%
+  summarize(count = n(),
+            participant = paste(unique(Participant), collapse=","))
+
+############
+#  Aggregate summary of variation and low recognition.
+############
+# Calculate variation change for each participant
+St %>%
+  group_by(Participant, GameTitle) %>%
+  summarize(median_value = median(rate_trial),
+            min_value = min(rate_trial),
+            max_value = max(rate_trial),
+            percentage_change_max = ((max_value - median_value ) / max_value) * 100,
+            percentage_change_min = ((median_value - min_value )  / median_value) * 100
+  ) %>%
+  filter(percentage_change_max < 25, percentage_change_min < 25)
+
+# Calculate who had less than half the expected MI events for each participant
+St %>%
+  group_by(Participant, GameTitle) %>%
+  summarize(max_value = max(rate_trial)) %>%
+  filter(max_value < 0.5)
+
+
+#############
+# Rough visual inspection of people's ratings to the feedback rate
+#############
+
+fig_g0 <- St %>% filter(group_trial == 'LOW') %>% group_by(GameTitle, Participant) %>%
+  arrange(rate_feedback) %>% 
+  do(p=plot_ly(., type='bar') %>%
+       add_trace(name="Feedback rate", x=~rate_feedback, y=~rate_feedback, width =.065, color=I('grey80'), type='bar') %>%
+       add_trace(name="Fabricated Input", x=~rate_feedback, y=~rate_fabInput, width=.065, color=I('grey60'), type='bar') %>%
+       add_trace(name="Perceived Control",x=~jitter(rate_feedback,amount=.02), y=~PercNormalized, color=I('black'), 
+                 type='scatter', mode='lines+markers') %>%
+       add_trace(name="Frustration",x=~jitter(rate_feedback,amount=.02), y=~FrustNormalized, color=I('FireBrick'), 
+                 type='scatter', mode='lines+markers') %>%
+       layout(showlegend=T, annotations=list(showarrow=F,x=0.5,y=-0.1,text=~paste(GameTitle, Participant)),
+              barmode='overlay', xaxis=list(tickvals="", title='', range=c(-0.1,1.1)),
+              yaxis=list(linecolor = toRGB("black"), linewidth = 1, showline = TRUE,
+                         tickvals = list(0, 0.16,0.33, 0.5,0.66, 0.83, 1),
+                         title='', range=c(-0.1,1.1),showticklabels=F))) %>%
+  subplot(nrows=1, shareX =T, shareY =F, heights=c(0.8), margin=0.001) %>% 
+  layout(showlegend=F,margin=list(l=0,r=0,b=0),
+         yaxis=list(linecolor = toRGB("black"), linewidth = 1, showline = TRUE,
+                    tickvals = list(0, 0.16,0.33, 0.5,0.66, 0.83, 1),
+                    title='', range=c(-0.1,1.1), showticklabels=T),
+         title='Group 1: Participants with Low MI rates<sup>
+         Inclusion Criteria: Mean MI rate lower than 40%')
+
+orca(fig_g0, "fig/study1-g0_group_low_mi.pdf", width=850, height=200)
+
+
+fig_g1 <- St %>% filter(group_trial == 'HIGH') %>% group_by(GameTitle, Participant) %>%
+  arrange(rate_feedback) %>% 
+  do(p=plot_ly(., type='bar',mode='overlay') %>%
+       add_trace(name="Feedback rate", x=~rate_feedback, y=~rate_feedback, width =.065, color=I('grey80'), type='bar',mode='overlay') %>%
+       add_trace(name="Fabricated Input", x=~rate_feedback, y=~rate_fabInput, width=.065, color=I('grey60'), type='bar',mode='overlay') %>%
+       add_trace(name="Perceived Control",x=~jitter(rate_feedback,amount=.02), y=~PercNormalized, color=I('black'), 
+                 type='scatter', mode='lines+markers') %>%
+       add_trace(name="Frustration",x=~jitter(rate_feedback,amount=.02), y=~FrustNormalized, color=I('FireBrick'), 
+                 type='scatter', mode='lines+markers') %>%
+       layout(showlegend=T, annotations=list(showarrow=F,x=0.5,y=-0.1,text=~paste(GameTitle, Participant)),
+              barmode='overlay', xaxis=list(tickvals="", title='', range=c(-0.1,1.1)),
+              yaxis=list(linecolor = toRGB("black"), linewidth = 1, showline = TRUE,
+                         tickvals = list(0, 0.16,0.33, 0.5,0.66, 0.83, 1),
+                         title='', range=c(-0.1,1.1), showticklabels=F))) %>%
+  subplot(nrows=1, shareX =T, shareY =F, heights=c(0.8), margin=0.001) %>% 
+  layout(showlegend=F,margin=list(l=0,r=0,b=0),
+         yaxis=list(linecolor = toRGB("black"), linewidth = 1, showline = TRUE,
+                    tickvals = list(0, 0.16,0.33, 0.5,0.66, 0.83, 1),
+                    title='', range=c(-0.1,1.1), showticklabels=T),
+         title='Group 2: Participants with High MI Rates<sup>
+         Inclusion Criteria: Mean MI rate higher than 75%')
+
+orca(fig_g1, "fig/study1-g1_group_high_mi.pdf", width=950, height=200)
+
+fig_g2 <- St %>% filter(group_feedback_range == 'HIGH') %>% group_by(GameTitle, Participant) %>%
+  arrange(rate_feedback) %>% 
+  do(p=plot_ly(., type='bar',mode='overlay') %>%
+       add_trace(name="Feedback rate", x=~rate_feedback, y=~rate_feedback, width =.065, color=I('grey80'), type='bar',mode='overlay') %>%
+       add_trace(name="Fabricated Input", x=~rate_feedback, y=~rate_fabInput, width=.065, color=I('grey60'), type='bar',mode='overlay') %>%
+       add_trace(name="Perceived Control",x=~jitter(rate_feedback,amount=.02), y=~PercNormalized, color=I('black'), 
+                 type='scatter', mode='lines+markers') %>%
+       add_trace(name="Frustration",x=~jitter(rate_feedback,amount=.02), y=~FrustNormalized, color=I('FireBrick'), 
+                 type='scatter', mode='lines+markers') %>%
+       layout(showlegend=T, annotations=list(showarrow=F,x=0.5,y=-0.1,text=~paste(GameTitle, Participant)),
+              barmode='overlay', xaxis=list(tickvals="", title='', range=c(-0.1,1.1)),
+              yaxis=list(linecolor = toRGB("black"), linewidth = 1, showline = TRUE,
+                         tickvals = list(0, 0.16,0.33, 0.5,0.66, 0.83, 1),
+                         title='', range=c(-0.1,1.1),showticklabels=F))) %>%
+  subplot(nrows=1, shareX =T, shareY =F, heights=c(0.8), margin=0.001) %>% 
+  layout(showlegend=F,margin=list(l=0,r=0,b=0),
+         yaxis=list(linecolor = toRGB("black"), linewidth = 1, showline = TRUE,
+                    tickvals = list(0, 0.16,0.33, 0.5,0.66, 0.83, 1),
+                    title='', range=c(-0.1,1.1), showticklabels=T),
+         title='Group 2: Participants with High Feedback Variance<sup>
+         Inclusion Criteria: More than 50% variance in feedback')
+
+orca(fig_g2, "fig/study1-g2_high_feedback_variance.pdf", width=850, height=200)
+
+export <- St %>% filter(GameTitle == "Kiwi") %>% ungroup %>% arrange(Participant) %>% select(Participant, Condition, FrustNormalized, rate_feedback) %>% rename(Frustration = FrustNormalized, control = rate_feedback)
+save(export, file = 'export.rda', compress=TRUE)
+  
+
 #############
 # Latex Table with demographic and summary information
 #############
 
-Sp_table <- Sp %>% select(bci_experience, mean_rate, min_rate, max_rate, mean_feedback, time_total,
+Sp_table <- Sp %>% select(mi_experience, mean_rate, min_rate, max_rate, mean_feedback, time_total,
                           fp_rate_minute, gender, GameTitle) %>%
-                    mutate(bci_experience = ifelse(bci_experience, "Yes", "No"),
+                    mutate(mi_experience = ifelse(mi_experience, "Yes", "No"),
                     mean_rate = paste(format(round(mean_rate * 100,0), nsmall = 0),"\\%"),
                     min_rate = paste(format(round(min_rate * 100,0), nsmall = 0),"\\%"),
                     max_rate = paste(format(round(max_rate * 100, 0), nsmall = 0),"\\%"),
@@ -121,7 +280,7 @@ Sp_table <- Sp %>% select(bci_experience, mean_rate, min_rate, max_rate, mean_fe
                     across(everything(), as.character))
 Sp_table <- Sp_table %>%
              rename(Gender = gender, `Mean Rate` = mean_rate, `Min. Rate` = min_rate,
-                    `Max. Rate` = max_rate, `Mean Pos. Feedback` = mean_feedback, `BCI Experience` = bci_experience,
+                    `Max. Rate` = max_rate, `Mean Pos. Feedback` = mean_feedback, `MI Experience` = mi_experience,
                     `Mean Time (s)` = time_total, `False Positives (pr min)` = fp_rate_minute)
 
 Sp_table = Sp_table %>% pivot_longer(cols=-c(Participant, GameTitle), names_to = "Feature") %>%
@@ -134,18 +293,210 @@ message(paste(Sp_table %>% apply(.,1,paste,collapse=" & "), collapse=" \\\\ "))
   group_by(Feature) %>% summarise(text = paste(fm_value, sep = " & ", collapse = " & "),
   text = paste(text, "\\ ")) %>% V
 
+  
+#############
+# Check for Balance in observations (St)
+#############
+# Check for overall balance.
+# Expected balance: 
+# Conclusion: Except P11, All rated had the same number of conditions/colors
+St %>% group_by(GameTitle) %>% filter(Participant != 11) %>%
+    summarize(Con_50A = sum(Condition == '50A'),
+              Con_50B = sum(Condition == '50B'),
+              Con_100A = sum(Condition == '100A'),
+              Con_100B = sum(Condition == '100B'),
+              Gender_M = sum(gender == 'M'),
+              Gender_F = sum(gender == 'F'),
+              KiwiHand = sum(GameOrder == 'KiwiHand'),
+              HandKiwi = sum(GameOrder == 'HandKiwi'),
+              Hand = sum(GameTitle == 'HandStrength'),
+              Kiwi = sum(GameTitle == 'Kiwi'),
+              Color_yellow = sum(color == 'Yellow'),
+              Color_blue = sum(color == 'Blue'),
+              Color_grey = sum(color == 'Grey'),
+              Color_red = sum(color == 'Red'),
+              Color_green = sum(color == 'Green')) %>% view()
+
+St %>% group_by(GameTitle, Participant) %>%
+  summarize(Con_50A = sum(Condition == '50A'),
+            Con_50B = sum(Condition == '50B'),
+            Con_100A = sum(Condition == '100A'),
+            Con_100B = sum(Condition == '100B'),
+            Gender_M = sum(gender == 'M'),
+            Gender_F = sum(gender == 'F'),
+            KiwiHand = sum(GameOrder == 'KiwiHand'),
+            HandKiwi = sum(GameOrder == 'HandKiwi'),
+            Hand = sum(GameTitle == 'HandStrength'),
+            Kiwi = sum(GameTitle == 'Kiwi'),
+            Color_yellow = sum(color == 'Yellow'),
+            Color_blue = sum(color == 'Blue'),
+            Color_grey = sum(color == 'Grey'),
+            Color_red = sum(color == 'Red'),
+            Color_green = sum(color == 'Green')) %>% view()
+
+# Check for balance within color order
+# Conclusion: Imbalanced
+St %>% group_by(GameTitle, Participant) %>% arrange(ConditionOrder) %>%
+  summarize(color_order = paste0(color, collapse='')) %>%
+  group_by(color_order) %>%
+  summarize(n = n()) %>% view()
+
+# Check for balance within condition order
+# Conclusion: Imbalanced
+St %>% group_by(GameTitle, Participant) %>% arrange(ConditionOrder) %>%
+  summarize(condition_order = paste0(Condition, collapse='')) %>%
+  group_by(condition_order) %>%
+  summarize(n = n()) %>% view()
+
+#Q: How do we make up for imbalance in our data set?
+# 1) We can use a "Type III ANOVA"
+
+
+#############
+# Repeated-measures friedman test
+#############
+  
+#friedman.test.with.post.hoc(FrustrationEpisode ~ as.factor(Condition) | as.factor(Partcipant), D_excl %>% )
+D_fry <- D_excl %>% dplyr::select(PerceivedControlEpisode,FrustrationEpisode, Condition, Participant) %>% filter(Condition != "100")
+D_fry <- as.data.frame(D_fry)
+D_fry$Condition = as.factor(D_fry$Condition)
+D_fry$Participant = as.integer(D_fry$Participant) # Note to self: friedman test requires participant numbers as integers, not factor.
+friedman.test(FrustrationEpisode~Condition|Participant, D_fry)
+friedman.test(PerceivedControlEpisode~Condition|Participant, D_fry)
+
 #############
 # Linear regression models
 #############
-  
-summary(lm(PercNormalized ~ rate_feedback, data = St %>% filter(GameTitle == "HandStrength")))
-summary(lm(PercNormalized ~ rate_trial, data = St %>% filter(GameTitle == "HandStrength")))
-summary(lm(FrustNormalized ~ rate_feedback, data = St))
-summary(lm(FrustNormalized ~ rate_trial, data = St))
-summary(lm(PercNormalized ~ fp_rate_minute, data = St))
+# Since we collect more than one data point from each subject,
+# our data is not independent. 
+# For multiple measures per subject, you need to use mixed models.
+# "Multiple responses from the same subject cannot be regarded as independent from each other".
+# Random intercept model: A model where we assume participant provide different intercepts,
+# but where we expect the slope to be the same. (1|Participant)
+# Random slope model: A model where we assume participants also provide different slopes.
+# (1+rate_feedback|Participant)
+
+# Perceived Control to Positive Feedback
+model.null = lmer(PercNormalized ~ (1|Participant), 
+                  data = St, REML=F)
+model.feedback = lmer(PercNormalized ~ rate_feedback + (1|Participant),
+                      data = St, REML=F)
+
+model.trial = lmer(PercNormalized ~ rate_trial + (1|Participant),
+                      data = St, REML=F)
+
+# Likelihood Ratio Test using ANOVA
+anova(model.null, model.feedback)
+anova(model.null, model.trial)
+
+#Perceived Control to Fabricated Input
+model.null = lmer(PercNormalized ~ (1|Participant), 
+                  data = St, REML=F)
+model.feedback = lmer(PercNormalized ~ rate_feedback + (1|Participant),
+                      data = St, REML=F)
+model.feedbackfab = lmer(PercNormalized ~ rate_feedback + rate_fabInput + (1|Participant),
+                      data = St, REML=F)
+
+# Likelihood Ratio Test using ANOVA
+anova(model.null, model.fab)
+anova(model.feedback, model.feedbackfab)
+
+#Q: When we have different representations of the "same thing" - e.g. variables,
+# how do we then test which variable is the better predictor?
+#A: Use R-Squared to make an estimate of the variance the variable explains
+
+r.squaredGLMM(model.fab, null=model.null)
+r.squaredGLMM(model.feedbackfab, null=model.null)
+r.squaredGLMM(model.trial, null=model.null)
+
+#Frustration  to Positive Feedback
+model.null = lmer(FrustNormalized ~ (1|Participant), 
+                  data = St, REML=F)
+model.feedback = lmer(FrustNormalized ~ rate_feedback + (1|Participant),
+                      data = St, REML=F)
+model.feedbackgame = lmer(FrustNormalized ~ rate_feedback + GameTitle + (1|Participant),
+                      data = St, REML=F)
+model.trial = lmer(FrustNormalized ~ rate_trial + (1|Participant),
+                   data = St, REML=F)
+
+boxplot(FrustNormalized ~ GameTitle, data = St) #GameTitle predicts frustration
+St %>% group_by(GameTitle) %>% summarize(frust = mean(FrustNormalized),
+                                         rate_feedback = mean(rate_feedback))
+# Likelihood Ratio Test using ANOVA
+anova(model.null, model.frust)
+anova(model.null, model.feedback)
+anova(model.feedback, model.feedbackgame)
+anova(model.null, model.trial)
+
+r.squaredGLMM(model.feedbackgame, null=model.null)
+r.squaredGLMM(model.feedback, null=model.null)
+
+#Positive Feedback Rate to Game
+model.null = lmer(rate_feedback ~ (1|Participant), 
+                  data = St, REML=F)
+model.game = lmer(rate_feedback ~ GameTitle + (1|Participant),
+                      data = St, REML=F)
+
+# Likelihood Ratio Test using ANOVA
+anova(model.null, model.game)
 
 
-    
+#############
+# General range of people's control over the cap.
+#############
+D %>% 
+
+#############
+# Does Positive Feedback increase MI rate?
+#############
+
+summary(lm(mi_recog ~ rate_feedback, data = St))
+
+fig %>%
+  add_trace(data = St, type = 'bar')
+
+#############
+# Faceted plots of what drives people's ratings.
+#############
+
+# Perceived Control to Rate Feedback
+St %>% filter(GameTitle == 'HandStrength') %>% group_by(Participant) %>% arrange(rate_feedback) %>%
+  do(p=plot_ly(.,x=~rate_feedback, y=~PercNormalized_rel, color=I('black'), 
+               type='scatter', mode='lines+markers') %>%
+       add_text(text=~Participant, x=0.15, y=0.9, color=I('red')) %>%
+       layout(xaxis=list(title='', range=c(0,1.1)), yaxis=list(title='', range=c(0,1.1)))) %>%
+  subplot(nrows=5, shareX =T, shareY =T) %>% 
+  layout(showlegend=F, xaxis=list(title='Feedback Rate'), yaxis=list(title='Perceived Control'))
+
+# Perceived Control to MI Rate
+St %>% filter(GameTitle == 'Kiwi') %>% group_by(Participant) %>% arrange(rate_trial) %>%
+  do(p=plot_ly(.,x=~rate_trial, y=~PercNormalized_rel, color=I('black'), 
+               type='scatter', mode='lines+markers') %>%
+       add_text(text=~Participant, x=0.15, y=0.9, color=I('red')) %>%
+       layout(xaxis=list(title='', range=c(0,1.1)), yaxis=list(title='', range=c(0,1.1)))) %>%
+  subplot(nrows=5, shareX =T, shareY =T) %>% 
+  layout(showlegend=F, xaxis=list(title='MI Rate'), yaxis=list(title='Perceived Control'))
+
+# Perceived Control to Play Order
+St %>% filter(GameTitle == 'Kiwi') %>% group_by(Participant) %>% arrange(ConditionOrder) %>%
+  do(p=plot_ly(.,x=~ConditionOrder, y=~PercNormalized_rel, color=I('black'), 
+               type='scatter', mode='lines+markers') %>%
+       add_text(text=~Participant, x=0.4, y=0.9, color=I('red')) %>%
+       layout(xaxis=list(title='', range=c(0,11)), yaxis=list(title='', range=c(0,1.1)))) %>%
+  subplot(nrows=5, shareX =T, shareY =T) %>% 
+  layout(showlegend=F, xaxis=list(title='Play Order'), yaxis=list(title='Perceived Control'))
+
+# Perceived Control to Condition
+St %>% filter(GameTitle == 'Kiwi') %>% group_by(Participant) %>% arrange(ConditionOrder) %>%
+  do(p=plot_ly(.,x=~factor(Condition, levels = c(1, 2)), y=~PercNormalized_rel, color=I('black'), 
+               type='scatter', mode='lines+markers') %>%
+       add_text(text=~Participant, x=0.4, y=0.9, color=I('red')) %>%
+       layout(xaxis=list(title='', range=c(-1,5)), yaxis=list(title='', range=c(0,1.1)))) %>%
+  subplot(nrows=5, shareX =T, shareY =T) %>% 
+  layout(showlegend=F, xaxis=list(title='Condition'), yaxis=list(title='Perceived Control'))
+
+
+
 #############
 # Participants' ratings by Game Title
 #############
@@ -202,12 +553,12 @@ St %>% group_by(mi_experience) %>%
 #############
 
 fig %>%
-  add_trace(data = St, x=~mi_recog, y=~mi_recog_window+mi_recog_rest,
-            type='scatter', mode='markers', color=I('white'), symbol=I('o'),
-            marker=list(size=6, color = 'grey'),
-            hoverinfo='text', text=~paste(Participant, Condition, GameOrder)) %>%
-  layout(showlegend=F, yaxis = list(range=c(-0.05,120), title="Input Window MI", showticklabels=T),
-         xaxis = list(range=c(0,120), title="Rest period MI"))
+  add_trace(data = St %>% filter(Participant == 1), x=~Condition, y=~(jitter(rate_trial,amount=0.03)),
+            type='scatter', mode='markers', color=~GameTitle, symbol=I('o'),
+            marker=list(size=~20*(PercNormalized)),
+            hoverinfo='text', text=~paste(PercNormalized, Participant, Condition, GameTitle, ConditionOrder)) %>%
+  layout(showlegend=F, yaxis = list(range=c(-0.05,1.1), title="Perceived Control", showticklabels=T),
+         xaxis = list(title="Condition"))
 
 
 #############
@@ -232,18 +583,18 @@ FabCurve50B <- data.frame(x = (1:100)/100, y = predict(FabCurve50B, data.frame(r
 
 
 fig1 <- fig %>%
-  add_trace(name = "100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_trial, y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_trial, y=~jitter(PercNormalized_prev_diff, amount=.02),
             type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
-  add_trace(name = "100% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_trial, y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "100% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_trial, y=~jitter(PercNormalized_prev_diff, amount=.02),
             type='scatter',mode='markers', color=I('black'), symbol=I('o'), marker=list(size=8)) %>%
   add_trace(data=FabCurve100A, x=~x, y=~y, line=list(shape = 'spline'), color=I('black'), type='scatter', mode='lines', showlegend=F) %>%
   add_trace(data=FabCurve100B, x=~x, y=~y, line=list(shape = 'spline'), color=I('grey70'), type='scatter', mode='lines', showlegend=F) %>%
   layout(yaxis = list(range=c(-0.05,1.1), title="Perceived Control"), xaxis = list(range=c(-0.05,1.1), title="MI Activation"))
 
 fig2 <- fig %>%
-  add_trace(name = "50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~rate_trial, y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~rate_trial, y=~jitter(PercNormalized_prev_diff, amount=.02),
             type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
-  add_trace(name = "50% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~rate_trial, y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "50% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~rate_trial, y=~jitter(PercNormalized_prev_diff, amount=.02),
             type='scatter',mode='markers', color=I('black'), symbol=I('o'), marker=list(size=8)) %>%
   add_trace(data=FabCurve50A, x=~x, y=~y, color=I('black'), line=list(shape = 'spline'), type='scatter', mode='line', showlegend=F) %>%
   add_trace(data=FabCurve50B, x=~x, y=~y, color=I('grey70'), line=list(shape = 'spline'), type='scatter', mode='line', showlegend=F) %>%
@@ -289,6 +640,19 @@ fig_c
 
 
 #############
+# Bar chart depicting mi recog to positive feedback rate.
+#############
+ 
+fig %>%
+   add_trace(data = St, x=~jitter(rate_feedback,amount=.02), y=~jitter( mi_recog_window - (mi_recog_rest / (time_rest),amount=.02), type='scatter', color=~Condition,
+             marker = list(line = list(width = 0, color = 'rgb(0, 0, 0)'))) %>%
+   add_trace(data = tibble(x=c(0,1),y=c(0,20)), x=~x, y=~y, type='scatter', mode='lines',
+             line = list(width = 1, color = 'rgb(0, 0, 0)'))
+
+# TODO: Normalize the mi_recog_window and mi_recog_rest by the time spent in each.
+ 
+ 
+#############
 # Bar chart depicting total number of activations, false positives, negatives
 #############
 
@@ -323,66 +687,123 @@ orca(fig_c, "fig/motor-imagery-event-count-bar-charts.pdf", width=950, height=47
 
 
 #############
-# Perceived Control to MI-attempt-based Control (Feedback rate) by Condition (Linear)
+# Perceived Control to Outcome-based Control by Condition
 #############
 
-  
+PercLine <- list("100A" = p_lin(St %>% filter(Condition == "100A"),"PercNormalized", "rate_trial"),
+                 "100B" = p_lin(St %>% filter(Condition == "100B"),"PercNormalized", "rate_trial"),
+                 "50A" = p_lin(St %>% filter(Condition == "50A"),"PercNormalized", "rate_trial"),
+                 "50B" = p_lin(St %>% filter(Condition == "50B"),"PercNormalized", "rate_trial"))
+
+FrustLine <- list("100A" = p_lin(St %>% filter(Condition == "100A"),"FrustNormalized", "rate_trial"),
+                 "100B" = p_lin(St %>% filter(Condition == "100B"), "FrustNormalized", "rate_trial"),
+                 "50A" = p_lin(St %>% filter(Condition == "50A"),"FrustNormalized", "rate_trial"),
+                 "50B" = p_lin(St %>% filter(Condition == "50B"),"FrustNormalized", "rate_trial"))
+
 fig1 <- fig %>%
-  add_trace(name= "100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
+  add_trace(name= "0-100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_trial, y=~jitter(PercNormalized, amount=.02),
             type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
-  add_trace(name = "100% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
-            type='scatter',mode='markers', color=I('black'), symbol=I('o'), marker=list(size=8)) %>%
-  layout(yaxis = list(range=c(-0.05,1.1)), xaxis = list(range=c(-0.05,1.1), title="Outcome-based control (No Limit)"))
+  add_trace(name = "0-100% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_trial, y=~jitter(PercNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('black'), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('o'), marker=list(size=8)) %>%
+  add_trace(data=PercLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
+  add_trace(data=PercLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="Perceived Control"), xaxis = list(range=c(-0.05,1.1), title="MI Control"))
 
 fig2 <- fig %>% 
-  add_trace(name = "50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "0-50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_trial, amount=.02), y=~jitter(PercNormalized, amount=.02),
             type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('square'), marker=list(size=7)) %>%
-  add_trace(name = "50% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "0-50% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_trial, amount=.02), y=~jitter(PercNormalized, amount=.02),
             type='scatter',mode='markers', color=I('black'), symbol=I('square-open'), marker=list(size=7)) %>%
-  layout(yaxis = list(range=c(-0.05,1.1), title="", showticklabels=F), xaxis = list(range=c(-0.05,1.1), title="Outcome-based Control (50% Limit)"))
+  add_trace(data=PercLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
+  add_trace(data=PercLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="", showticklabels=F), xaxis = list(range=c(-0.05,1.1), title="MI Control (50% Negatives)"))
 
-fig_c <- subplot(fig1, fig2, titleY = TRUE, titleX = TRUE) %>% 
-  layout(title = 'Conditions w/ Fab. Input to Control Conditions')
+fig3 <- fig %>%
+  add_trace(name= "0-100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_trial, y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
+  add_trace(name = "0-100% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_trial, y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('black'), symbol=I('o'), marker=list(size=8)) %>%
+  add_trace(data=FrustLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
+  add_trace(data=FrustLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="Frustration"), xaxis = list(range=c(-0.05,1.1), title="MI Control"))
+
+fig4 <- fig %>% 
+  add_trace(name = "0-50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_trial, amount=.02), y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('square'), marker=list(size=7)) %>%
+  add_trace(name = "0-50% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_trial, amount=.02), y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('black'), symbol=I('square-open'), marker=list(size=7)) %>%
+  add_trace(data=FrustLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
+  add_trace(data=FrustLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="", showticklabels=F), xaxis = list(range=c(-0.05,1.1), title="MI Control (50% Negatives)"))
+
+
+
+fig_c <- subplot(fig1,fig2, titleY = TRUE, titleX = TRUE) %>% 
+  layout(legend=list(orientation='h', x = 0.20, y = 1.12), title = '')
 fig_c
+orca(fig_c, "fig/study1-perc-mi-control-fabricated-input.pdf", width=650, height=350)
+fig_c <- subplot(fig3,fig4, titleY = TRUE, titleX = TRUE) %>% 
+  layout(legend=list(orientation='h', x = 0.20, y = 1.12), title = '')
+fig_c
+orca(fig_c, "fig/study1-frust-mi-control-fabricated-input.pdf", width=650, height=350)
 
-orca(fig_c, "fig/fabricated-input-to-control-feedback-rate.pdf", width=950, height=350)
+
+
 #############
 # Perceived Control to Outcome-based Control by Condition
 #############
 
-# Story 1: We can move people upwards, if we provide them fabricated input.
-FabCurve100A <- St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"),Condition == "100A") %>% select(rate_feedback, PercNormalized)
-FabCurve100A <- lm(PercNormalized ~ rate_feedback, data = FabCurve100A)
-FabCurve100A <- data.frame(x = (1:100)/100, y = predict(FabCurve100A, data.frame(rate_feedback = (1:100)/100)))
-FabCurve100B <- St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"),Condition == "100B") %>% select(rate_feedback, PercNormalized)
-FabCurve100B <- lm(PercNormalized ~ rate_feedback, data = FabCurve100B)
-FabCurve100B <- data.frame(x = (1:100)/100, y = predict(FabCurve100B, data.frame(rate_feedback = (1:100)/100)))
-FabCurve50A <- St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"),Condition == "50A") %>% select(rate_feedback, PercNormalized)
-FabCurve50A <- lm(PercNormalized ~ rate_feedback, data = FabCurve50A)
-FabCurve50A <- data.frame(x = (1:50)/100, y = predict(FabCurve50A, data.frame(rate_feedback = (1:50)/100)))
-FabCurve50B <- St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"),Condition == "50B") %>% select(rate_feedback, PercNormalized)
-FabCurve50B <- lm(PercNormalized ~ rate_feedback, data = FabCurve50B)
-FabCurve50B <- data.frame(x = (1:50)/100, y = predict(FabCurve50B, data.frame(rate_feedback = (1:50)/100)))
+PercLine <- list("100A" = p_lin(St %>% filter(Condition == "100A"),"PercNormalized", "rate_feedback"),
+                 "100B" = p_lin(St %>% filter(Condition == "100B"),"PercNormalized", "rate_feedback"),
+                 "50A" = p_lin(St %>% filter(Condition == "50A"),"PercNormalized", "rate_feedback"),
+                 "50B" = p_lin(St %>% filter(Condition == "50B"),"PercNormalized", "rate_feedback"))
 
-fig1 <- fig %>%
-  add_trace(name= "100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
+FrustLine <- list("100A" = p_lin(St %>% filter(Condition == "100A"),"FrustNormalized", "rate_feedback"),
+                  "100B" = p_lin(St %>% filter(Condition == "100B"), "FrustNormalized", "rate_feedback"),
+                  "50A" = p_lin(St %>% filter(Condition == "50A"),"FrustNormalized", "rate_feedback"),
+                  "50B" = p_lin(St %>% filter(Condition == "50B"),"FrustNormalized", "rate_feedback"))
+
+fig %>%
+  add_trace(name= "0-100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
             type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
-  add_trace(name = "100% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
-            type='scatter',mode='markers', color=I('black'), symbol=I('o'), marker=list(size=8)) %>%
-  add_trace(data=FabCurve100A, x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
-  add_trace(data=FabCurve100B, x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
-  layout(yaxis = list(range=c(-0.05,1.1)), xaxis = list(range=c(-0.05,1.1), title="Outcome-based Control (No Limit)"))
-
-fig2 <- fig %>% 
-  add_trace(name = "50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "0-100% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_feedback, y=~jitter(PercNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('black'), hoverinfo='text',text=~paste(Participant,Condition, GameTitle), symbol=I('o'), marker=list(size=8)) %>%
+  add_trace(data=PercLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=T, name='0-100%') %>%
+  add_trace(data=PercLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+  add_trace(name = "0-50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
             type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('square'), marker=list(size=7)) %>%
-  add_trace(name = "50% + 30% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
+  add_trace(name = "0-50% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_feedback, amount=.02), y=~jitter(PercNormalized, amount=.02),
             type='scatter',mode='markers', color=I('black'), symbol=I('square-open'), marker=list(size=7)) %>%
-  add_trace(data=FabCurve50A, x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
-  add_trace(data=FabCurve50B, x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
-  layout(yaxis = list(range=c(-0.05,1.1), title="", showticklabels=F), xaxis = list(range=c(-0.05,1.1), title="Outcome-based Control (50% Limit)"))
+  add_trace(data=PercLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', line=list(dash = 'dash'), showlegend=T, name='0-50%') %>%
+  add_trace(data=PercLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line',line=list(dash = 'dash'), showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="Perceived Control"), xaxis = list(range=c(-0.05,1.1), title="Feedback"))
 
-fig_c <- subplot(fig1, fig2, titleY = TRUE, titleX = TRUE) %>% 
-  layout(title = 'Conditions w/ Fab. Input to Control Conditions')
+fig3 <- fig %>%
+  add_trace(name= "0-100%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "100A"), x=~rate_trial, y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('circle'), marker=list(size=8)) %>%
+  add_trace(name = "0-100% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "100B"), x=~rate_trial, y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('black'), symbol=I('o'), marker=list(size=8)) %>%
+  add_trace(data=FrustLine[["100A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
+  add_trace(data=FrustLine[["100B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="Frustration"), xaxis = list(range=c(-0.05,1.1), title="MI Control"))
 
-orca(fig_c, "fig/fabricated-input-to-control.pdf", width=950, height=350)
+fig4 <- fig %>% 
+  add_trace(name = "0-50%", data = St %>% filter(GameTitle %in% c("HandStrength", "Kiwi"), Condition == "50A"), x=~jitter(rate_trial, amount=.02), y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I("rgba(0, 0, 0, 0.7)"), symbol=I('square'), marker=list(size=7)) %>%
+  add_trace(name = "0-50% F", data = St %>% filter(GameTitle %in% c("HandStrength","Kiwi"), Condition == "50B"), x=~jitter(rate_trial, amount=.02), y=~jitter(FrustNormalized, amount=.02),
+            type='scatter',mode='markers', color=I('black'), symbol=I('square-open'), marker=list(size=7)) %>%
+  add_trace(data=FrustLine[["50A"]], x=~x, y=~y, color=I('black'), type='scatter', mode='line', showlegend=F) %>%
+  add_trace(data=FrustLine[["50B"]], x=~x, y=~y, color=I('grey70'), type='scatter', mode='line', showlegend=F) %>%
+  layout(yaxis = list(range=c(-0.05,1.1), title="", showticklabels=F), xaxis = list(range=c(-0.05,1.1), title="MI Control (50% Negatives)"))
+
+
+
+fig_c <- subplot(fig1,fig2, titleY = TRUE, titleX = TRUE) %>% 
+  layout(legend=list(orientation='h', x = 0.20, y = 1.12), title = '')
+fig_c
+orca(fig_c, "fig/study1-perc-mi-control-fabricated-input.pdf", width=650, height=350)
+fig_c <- subplot(fig3,fig4, titleY = TRUE, titleX = TRUE) %>% 
+  layout(legend=list(orientation='h', x = 0.20, y = 1.12), title = '')
+fig_c
+orca(fig_c, "fig/study1-frust-mi-control-fabricated-input.pdf", width=650, height=350)
+

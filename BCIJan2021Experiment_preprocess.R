@@ -71,7 +71,7 @@ L <- L_kiwi %>% bind_rows(L_hand)
 valid_pids = 1:16
 L <- L %>% filter(Participant %in% valid_pids)
 
-# Create ConditionOrderTotal
+# Create ConditionOrder
 # Calculates order of conditions, also based by which game is first.
 L <- L %>% group_by(Participant) %>% fill(GameOrder, .direction = c("downup"))
 L <- L %>% ungroup() %>%
@@ -79,6 +79,16 @@ L <- L %>% ungroup() %>%
          OrderAll = ifelse(GameTitle == "Kiwi" & GameOrder == "HandKiwi", OrderAll+4, OrderAll),
          OrderAll = ifelse(GameTitle == "HandStrength" & GameOrder == "KiwiHand", OrderAll+4, OrderAll))
   
+#L <- L %>% arrange(GameTitle, Participant, OrderAll) %>% group_by(GameTitle, Participant) %>%
+  #mutate(PercNormalized_prev = lag(PercNormalized),
+#         PercNormalized_prev = ifelse(is.na(PercNormalized_prev), 0, PercNormalized_prev),
+#         PercNormalized_first = first(PercNormalized),
+#         PercNormalized_prev_diff = PercNormalized - PercNormalized_prev,
+#         PercNormalized_first_diff = PercNormalized - PercNormalized_first)
+
+L <- L %>% arrange(GameTitle, Participant, PercNormalized) %>% group_by(GameTitle, Participant) %>%
+  mutate(PercNormalized_rel = PercNormalized - first(PercNormalized))
+
 
 #############
 # Merge
