@@ -10,7 +10,12 @@ p_lin <- function(df, response, term) {
   return(curve)
 }
 
+
 p_supsmu <- function(df, response, term, b=10) {
   curve = supsmu(df[[term]], df[[response]], bass=b)
   return(curve)
+}
+
+n_clip <- function(x, a = 0, b = 1) {
+  ifelse(x <= a,  a, ifelse(x >= b, b, x))
 }
